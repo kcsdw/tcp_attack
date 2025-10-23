@@ -270,9 +270,7 @@ int main(int argc, char *argv[]) {
 
 	// 解析命令行选项
 	int opt;
-	argc -= 2;
-	argv += 2;
-	while ((opt = getopt(argc, argv, "p:t:d:sqah")) != -1) {
+	while ((opt = getopt(argc - 2, argv + 2, "p:t:d:sqah")) != -1) {
 		switch (opt) {
 		case 'p':
 			packet_count = atoi(optarg);
