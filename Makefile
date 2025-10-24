@@ -5,11 +5,11 @@ CC = gcc
 CFLAGS = -Wall -Wextra -O2 -I./lib/include
 
 # Source files (shared library)
-LIB_SRC = lib/tcp.c
+LIB_SRC = lib/ip_utils.c
 LIB_OBJ = $(LIB_SRC:.c=.o)
 
 # Executables
-TARGETS = syn_attack
+TARGETS = syn_attack setmac
 
 # Default target
 all: $(TARGETS)

